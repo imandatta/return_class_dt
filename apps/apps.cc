@@ -1,5 +1,10 @@
 #include "apps.h"
 
+#include <cmath>
+
+namespace apps
+{
+
 // app0
 const std::shared_ptr<WriteoutDiagnostic> App0::call(const std::array<real, 3>& x) const
 {
@@ -52,3 +57,5 @@ const std::shared_ptr<WriteoutDiagnostic> App2::call(const std::array<real, 3>& 
         return _wd;
     }
 }
+
+} // namespace apps

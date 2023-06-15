@@ -4,14 +4,12 @@
 #include <memory>
 #include <array>
 #include <string>
-#include <vector>
-#include <limits>
-#include <ctime>
-#include <cmath>
 
 
+#include "definitions.h"
 
-typedef double real;
+namespace apps
+{
 
 class WriteoutDiagnostic
 {
@@ -160,3 +158,5 @@ public:
     const std::shared_ptr<WriteoutDiagnostic>
     call(const std::array<real, 3>& x) const override;
 };
+
+} // namespace apps

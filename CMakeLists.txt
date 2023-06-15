@@ -6,11 +6,14 @@ set(CMAKE_CXX_STANDARD 17)
 
 
 add_subdirectory(apps)
-set(SOURCES apps/apps.cc)
-add_executable(mytest main.cc ${SOURCES})
-
-
-
+set(APP_SOURCES apps/apps.cc)
+set(SOLVER_SOURCES solver/solver.cc)
+set(MPI_BOILERPLATE_SOURCES mpi_boilerplate/mpi_boilerplate.cc)
+add_executable(mytest main.cc
+					  ${APP_SOURCES}
+					  ${SOLVER_SOURCES}
+					  ${MPI_BOILERPLATE_SOURCES})
+target_include_directories(mytest PRIVATE ${PROJECT_SOURCE_DIR})
 
 
 # Require MPI for this project:
