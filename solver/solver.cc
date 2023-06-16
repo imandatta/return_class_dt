@@ -9,6 +9,69 @@
 namespace solver
 {
 
+void solver()
+{
+    // Do the time advance and get the write diagostic with min_dt out per patch
+    const std::shared_ptr<apps::WriteoutDiagnostic> wd = patch_time_advance();
+
+    // Now we need to coalesce the wd
+    real my_dt = wd->getDt();
+
+    // I want to allreduce dt but also carry the x and phyics
+    // Can use MPI_MINLOC to reduct dt but also carry the rank of the wd which holds it
+    // https://www.open-mpi.org/doc/v4.1/man3/MPI_Reduce.3.php
+    struct DtInfo
+    {
+        real dt;
+        int rank;
+    };
+
+    DtInfo local_info;
+    DtInfo global_info;
+
+    int my_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+    // Seed for random number generation based on rank
+    // std::srand(std::time(nullptr) + my_rank * 1E12); // use current time as seed for
+    // random generator std::srand(std::time(nullptr)); // use current time as seed for
+    // random generator std::srand(my_rank + 1); std::srand(my_rank); // use current time
+    // as seed for random generator
+
+    local_info.dt = my_dt;
+    local_info.rank = my_rank;
+    // MPI_Allreduce(&my_dt, &comb_dt, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(
+        &local_info, &global_info, 1, MPI_DOUBLE_INT, MPI_MINLOC, MPI_COMM_WORLD);
+
+    real comb_dt = global_info.dt;
+    std::array<real, 3> comb_x = wd->getX();
+    MPI_Bcast(comb_x.data(), 3, MPI_DOUBLE, global_info.rank, MPI_COMM_WORLD);
+
+    // https://stackoverflow.com/questions/46331763/what-is-the-most-elegant-way-of-broadcasting-stdstring-in-mpi
+    std::string app = wd->getPhysics();
+    int app_string_size = app.size();
+    // Variable app receives a value on mpiid = global_info.rank
+    MPI_Bcast(&app_string_size, 1, MPI_INT, global_info.rank, MPI_COMM_WORLD);
+    if (my_rank != global_info.rank)
+    {
+        app.resize(app_string_size);
+    }
+
+    MPI_Bcast(const_cast<char*>(app.data()),
+              app_string_size,
+              MPI_CHAR,
+              global_info.rank,
+              MPI_COMM_WORLD);
+
+    if (local_info.rank == 0)
+    {
+        std::cout << "combined_dt = " << comb_dt << " min rank = " << global_info.rank
+                  << " x = (" << comb_x[0] << ", " << comb_x[1] << ", " << comb_x[2]
+                  << ") physics = " << app << std::endl;
+    }
+}
+
 const std::shared_ptr<apps::WriteoutDiagnostic> patch_time_advance()
 {
     // setup apps
@@ -98,69 +161,6 @@ const std::shared_ptr<apps::WriteoutDiagnostic> patch_time_advance()
     // sugg_wd->getPhysics() << std::endl;
 
     return sugg_wd;
-}
-
-void solver()
-{
-    // Do the time advance and get the write diagostic with min_dt out per patch
-    const std::shared_ptr<apps::WriteoutDiagnostic> wd = patch_time_advance();
-
-    // Now we need to coalesce the wd
-    real my_dt = wd->getDt();
-
-    // I want to allreduce dt but also carry the x and phyics
-    // Can use MPI_MINLOC to reduct dt but also carry the rank of the wd which holds it
-    // https://www.open-mpi.org/doc/v4.1/man3/MPI_Reduce.3.php
-    struct DtInfo
-    {
-        real dt;
-        int rank;
-    };
-
-    DtInfo local_info;
-    DtInfo global_info;
-
-    int my_rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-
-    // Seed for random number generation based on rank
-    // std::srand(std::time(nullptr) + my_rank * 1E12); // use current time as seed for
-    // random generator std::srand(std::time(nullptr)); // use current time as seed for
-    // random generator std::srand(my_rank + 1); std::srand(my_rank); // use current time
-    // as seed for random generator
-
-    local_info.dt = my_dt;
-    local_info.rank = my_rank;
-    // MPI_Allreduce(&my_dt, &comb_dt, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(
-        &local_info, &global_info, 1, MPI_DOUBLE_INT, MPI_MINLOC, MPI_COMM_WORLD);
-
-    real comb_dt = global_info.dt;
-    std::array<real, 3> comb_x = wd->getX();
-    MPI_Bcast(comb_x.data(), 3, MPI_DOUBLE, global_info.rank, MPI_COMM_WORLD);
-
-    // https://stackoverflow.com/questions/46331763/what-is-the-most-elegant-way-of-broadcasting-stdstring-in-mpi
-    std::string app = wd->getPhysics();
-    int app_string_size = app.size();
-    // Variable app receives a value on mpiid = global_info.rank
-    MPI_Bcast(&app_string_size, 1, MPI_INT, global_info.rank, MPI_COMM_WORLD);
-    if (my_rank != global_info.rank)
-    {
-        app.resize(app_string_size);
-    }
-
-    MPI_Bcast(const_cast<char*>(app.data()),
-              app_string_size,
-              MPI_CHAR,
-              global_info.rank,
-              MPI_COMM_WORLD);
-
-    if (local_info.rank == 0)
-    {
-        std::cout << "combined_dt = " << comb_dt << " min rank = " << global_info.rank
-                  << " x = (" << comb_x[0] << ", " << comb_x[1] << ", " << comb_x[2]
-                  << ") physics = " << app << std::endl;
-    }
 }
 
 } // namespace solver

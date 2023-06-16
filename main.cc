@@ -15,8 +15,6 @@
 #include "solver/solver.h"
 #include "mpi_boilerplate/mpi_boilerplate.h"
 
-// typedef double real;
-
 
 int main(int argc, char** argv)
 {
