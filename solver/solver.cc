@@ -3,7 +3,6 @@
 #include <mpi.h>
 
 #include <limits>
-#include <vector>
 #include <array>
 #include <algorithm>
 
