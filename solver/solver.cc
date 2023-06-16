@@ -1,6 +1,6 @@
 #include "solver.h"
 
-#include "mpi_boilerplate/mpi_boilerplate.h"
+#include <mpi.h>
 
 #include <limits>
 #include <vector>
