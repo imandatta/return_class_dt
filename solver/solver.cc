@@ -5,74 +5,101 @@
 #include <limits>
 #include <vector>
 #include <array>
+#include <algorithm>
 
 namespace solver
 {
 
+struct DtInfo
+{
+    real dt;
+    int rank;
+};
+
 void solver()
 {
     // Do the time advance and get the write diagostic with min_dt out per patch
-    const std::shared_ptr<apps::WriteoutDiagnostic> wd = patch_time_advance();
-
-    // Now we need to coalesce the wd
-    real my_dt = wd->getDt();
-
-    // I want to allreduce dt but also carry the x and phyics
-    // Can use MPI_MINLOC to reduct dt but also carry the rank of the wd which holds it
-    // https://www.open-mpi.org/doc/v4.1/man3/MPI_Reduce.3.php
-    struct DtInfo
-    {
-        real dt;
-        int rank;
-    };
-
-    DtInfo local_info;
-    DtInfo global_info;
+    const std::vector<std::shared_ptr<apps::WriteoutDiagnostic>>& wds =
+        patch_time_advance();
 
     int my_rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-    // Seed for random number generation based on rank
-    // std::srand(std::time(nullptr) + my_rank * 1E12); // use current time as seed for
-    // random generator std::srand(std::time(nullptr)); // use current time as seed for
-    // random generator std::srand(my_rank + 1); std::srand(my_rank); // use current time
-    // as seed for random generator
+    const int num_apps = wds.size();
+    std::vector<std::string> min_phys;
+    std::vector<real> min_dt;
+    std::vector<std::array<real, 3>> min_x;
 
-    local_info.dt = my_dt;
-    local_info.rank = my_rank;
-    // MPI_Allreduce(&my_dt, &comb_dt, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(
-        &local_info, &global_info, 1, MPI_DOUBLE_INT, MPI_MINLOC, MPI_COMM_WORLD);
-
-    real comb_dt = global_info.dt;
-    std::array<real, 3> comb_x = wd->getX();
-    MPI_Bcast(comb_x.data(), 3, MPI_DOUBLE, global_info.rank, MPI_COMM_WORLD);
-
-    // https://stackoverflow.com/questions/46331763/what-is-the-most-elegant-way-of-broadcasting-stdstring-in-mpi
-    std::string app = wd->getPhysics();
-    int app_string_size = app.size();
-    // Variable app receives a value on mpiid = global_info.rank
-    MPI_Bcast(&app_string_size, 1, MPI_INT, global_info.rank, MPI_COMM_WORLD);
-    if (my_rank != global_info.rank)
+    // for (auto& wd : wds)
+    for (int app_idx = 0; app_idx < num_apps; app_idx++)
     {
-        app.resize(app_string_size);
+        const std::shared_ptr<apps::WriteoutDiagnostic>& wd = wds[app_idx];
+
+        // Now we need to coalesce the wd
+        real my_dt = wd->getDt();
+
+        // I want to allreduce dt but also carry the x and phyics
+        // Can use MPI_MINLOC to reduct dt but also carry the rank of the wd which holds
+        // it https://www.open-mpi.org/doc/v4.1/man3/MPI_Reduce.3.php
+        DtInfo local_info;
+        DtInfo global_info;
+
+        // Seed for random number generation based on rank
+        // std::srand(std::time(nullptr) + my_rank * 1E12); // use current time as seed
+        // for random generator std::srand(std::time(nullptr)); // use current time as
+        // seed for random generator std::srand(my_rank + 1); std::srand(my_rank); // use
+        // current time as seed for random generator
+
+        local_info.dt = my_dt;
+        local_info.rank = my_rank;
+        // MPI_Allreduce(&my_dt, &comb_dt, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(
+            &local_info, &global_info, 1, MPI_DOUBLE_INT, MPI_MINLOC, MPI_COMM_WORLD);
+
+        real comb_dt = global_info.dt;
+        std::array<real, 3> comb_x = wd->getX();
+        MPI_Bcast(comb_x.data(), 3, MPI_DOUBLE, global_info.rank, MPI_COMM_WORLD);
+
+        // https://stackoverflow.com/questions/46331763/what-is-the-most-elegant-way-of-broadcasting-stdstring-in-mpi
+        std::string app = wd->getPhysics();
+        int app_string_size = app.size();
+        // Variable app receives a value on mpiid = global_info.rank
+        MPI_Bcast(&app_string_size, 1, MPI_INT, global_info.rank, MPI_COMM_WORLD);
+        if (my_rank != global_info.rank)
+        {
+            app.resize(app_string_size);
+        }
+
+        MPI_Bcast(const_cast<char*>(app.data()),
+                  app_string_size,
+                  MPI_CHAR,
+                  global_info.rank,
+                  MPI_COMM_WORLD);
+
+        min_dt.push_back(comb_dt);
+        min_x.push_back(comb_x);
+        min_phys.push_back(app);
+
+        if (local_info.rank == 0)
+        {
+            std::cout << "physics = " << app << " combined_dt = " << comb_dt
+                      << " min rank = " << global_info.rank << " x = (" << comb_x[0]
+                      << ", " << comb_x[1] << ", " << comb_x[2] << ")" << std::endl;
+        }
     }
 
-    MPI_Bcast(const_cast<char*>(app.data()),
-              app_string_size,
-              MPI_CHAR,
-              global_info.rank,
-              MPI_COMM_WORLD);
-
-    if (local_info.rank == 0)
+    std::vector<real>::iterator tmp = std::min_element(min_dt.begin(), min_dt.end());
+    int min_dt_idx = std::distance(min_dt.begin(), tmp);
+    if (my_rank == 0)
     {
-        std::cout << "combined_dt = " << comb_dt << " min rank = " << global_info.rank
-                  << " x = (" << comb_x[0] << ", " << comb_x[1] << ", " << comb_x[2]
-                  << ") physics = " << app << std::endl;
+        std::cout << "Global dt_min = " << min_dt[min_dt_idx] << " x = ("
+                  << min_x[min_dt_idx][0] << ", " << min_x[min_dt_idx][1] << ", "
+                  << min_x[min_dt_idx][2] << ")"
+                  << " physics = " << min_phys[min_dt_idx] << std::endl;
     }
 }
 
-const std::shared_ptr<apps::WriteoutDiagnostic> patch_time_advance()
+const std::vector<std::shared_ptr<apps::WriteoutDiagnostic>> patch_time_advance()
 {
     // setup apps
     const int num_apps = 3;
@@ -96,11 +123,17 @@ const std::shared_ptr<apps::WriteoutDiagnostic> patch_time_advance()
     apps.back()->setup();
 
     // start with infinite dt
-    real sugg_dt = std::numeric_limits<real>::infinity();
-    std::array<real, 3> xloc = {0, 0, 0};
-    std::string slowest_physics = "nothing";
-    std::shared_ptr<apps::WriteoutDiagnostic> sugg_wd =
-        std::make_shared<apps::WriteoutDiagnostic>(sugg_dt, xloc, slowest_physics);
+    std::vector<std::shared_ptr<apps::WriteoutDiagnostic>> sugg_wd;
+    for (int app_idx = 0; app_idx < num_apps; app_idx++)
+    {
+        real sugg_dt = std::numeric_limits<real>::infinity();
+        std::array<real, 3> xloc = {0, 0, 0};
+        std::string slowest_physics = "nothing";
+        // std::shared_ptr<apps::WriteoutDiagnostic> sugg_wd =
+        // std::make_shared<apps::WriteoutDiagnostic>(sugg_dt, xloc, slowest_physics);
+        sugg_wd.emplace_back(
+            std::make_shared<apps::WriteoutDiagnostic>(sugg_dt, xloc, slowest_physics));
+    }
 
     // setup a vector of apps
 
@@ -126,24 +159,16 @@ const std::shared_ptr<apps::WriteoutDiagnostic> patch_time_advance()
         // node_idx / 2.0 + 6};
 
         // assume in x = [0, 1], y = 0, z = 0
-        const std::array<real, 3> x = {
-            patch_length * rank + node_dx * node_idx, 0.0, 0.0};
+        const std::array<real, 3> x = {patch_length * rank + node_dx * node_idx,
+                                       static_cast<real>(rank) + 8.25,
+                                       static_cast<real>(rank) * -6};
         // iterate through apps
         for (int app_idx = 0; app_idx < num_apps; app_idx++)
         {
             auto& app = apps[app_idx];
-            // std::vector<apps>; avoids having a physics string
-            // grab the minimum timestep and x for each app
-            // maybe use mpi_double
-            const real dt = 3 * (app_idx - 1) * 0.1 + 0.5 + num_apps - 4 * app_idx + 1 -
-                            3 * rank - rank * rank;
-
-            // std::string physics = "app" + std::to_string(app_idx);
-
-            // App app;
-            // app.setup();
             std::shared_ptr<apps::WriteoutDiagnostic> wd = app->call(x);
-            *sugg_wd = apps::WriteoutDiagnostic::minDt(*sugg_wd, *wd);
+            // *sugg_wd = apps::WriteoutDiagnostic::minDt(*sugg_wd, *wd);
+            *sugg_wd[app_idx] = apps::WriteoutDiagnostic::minDt(*sugg_wd[app_idx], *wd);
 
             // another app that does the same thing but prints
         }

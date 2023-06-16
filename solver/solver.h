@@ -23,6 +23,6 @@ namespace solver
 void solver();
 
 // Mimic RK solve with dg
-const std::shared_ptr<apps::WriteoutDiagnostic> patch_time_advance();
+const std::vector<std::shared_ptr<apps::WriteoutDiagnostic>> patch_time_advance();
 
 } // namespace solver
